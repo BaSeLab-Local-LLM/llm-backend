@@ -1,5 +1,8 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -22,15 +25,17 @@ class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
     __table_args__ = {"schema": "llm_app"}
 
-    id: Optional[UUID] = Field(default=None, primary_key=True)
+    id: Optional[UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="llm_app.users.id")
     title: Optional[str] = Field(default="새 대화", max_length=256)
     model_name: Optional[str] = Field(default=None, max_length=128)
     is_active: bool = Field(default=True)
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
     updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 
@@ -66,6 +71,7 @@ class Message(SQLModel, table=True):
         )
     )
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 

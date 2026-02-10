@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -24,6 +24,7 @@ class AuditLog(SQLModel, table=True):
     new_value: Optional[Any] = Field(sa_column=Column(JSON, nullable=True))
     ip_address: Optional[str] = Field(default=None, max_length=45)
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 
@@ -44,6 +45,7 @@ class LoginHistory(SQLModel, table=True):
     success: bool = Field(default=True)
     failure_reason: Optional[str] = Field(default=None, max_length=128)
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 

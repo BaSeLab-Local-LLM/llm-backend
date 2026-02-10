@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -33,9 +33,11 @@ class User(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
     updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 

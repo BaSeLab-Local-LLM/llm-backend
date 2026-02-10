@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, timezone, time
 from typing import Optional
 from uuid import UUID
 
@@ -17,6 +17,7 @@ class SystemSetting(SQLModel, table=True):
         default=None, foreign_key="llm_app.users.id"
     )
     updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 
@@ -36,9 +37,11 @@ class OperationSchedule(SQLModel, table=True):
         default=None, foreign_key="llm_app.users.id"
     )
     created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
     updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
+    # LiteLLM
+    LITELLM_URL: str = "http://litellm:4000"
+    LITELLM_MASTER_KEY: str = ""
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

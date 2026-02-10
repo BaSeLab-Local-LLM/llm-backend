@@ -58,6 +58,31 @@ async def create_conversation(
     return conversation
 
 
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """대화방 소프트 삭제 (is_active = False)"""
+    conv_result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+    )
+    conversation = conv_result.scalars().first()
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="대화방을 찾을 수 없습니다.",
+        )
+
+    conversation.is_active = False
+    await db.flush()
+    return None
+
+
 # ─── Messages ─────────────────────────────────────────────────────────────────
 
 
