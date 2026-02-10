@@ -1,0 +1,41 @@
+import enum
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from sqlmodel import SQLModel, Field
+from sqlalchemy import Column, Enum as SAEnum, DateTime
+
+
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    student = "student"
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    __table_args__ = {"schema": "llm_app"}
+
+    id: Optional[UUID] = Field(default=None, primary_key=True)
+    api_key: str = Field(max_length=128)
+    username: str = Field(max_length=64)
+    password_hash: str = Field(max_length=256)
+    role: UserRole = Field(
+        sa_column=Column(
+            SAEnum(UserRole, name="user_role", schema="llm_app", create_type=False),
+            nullable=False,
+            default="student",
+        )
+    )
+    is_active: bool = Field(default=True)
+    daily_token_limit: Optional[int] = Field(default=100000)
+    api_key_expires_at: Optional[datetime] = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: Optional[datetime] = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: Optional[datetime] = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
