@@ -2,8 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies if needed (e.g. gcc for some python packages)
-# RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+# pdfplumber 및 Pillow에 필요한 시스템 의존성
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

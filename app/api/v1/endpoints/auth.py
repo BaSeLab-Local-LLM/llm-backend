@@ -73,6 +73,9 @@ async def login(
             failure_reason="user_not_found",
         )
         db.add(login_log)
+        # HTTPException은 Exception 하위 → get_db에서 rollback 됨
+        # 로그를 보존하려면 반드시 commit 후 raise
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="아이디 또는 비밀번호가 올바르지 않습니다.",
@@ -88,6 +91,7 @@ async def login(
             failure_reason="account_disabled",
         )
         db.add(login_log)
+        await db.commit()
         # 로그인 실패 횟수 초과로 비활성화된 경우 구분된 메시지
         if user.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
             raise HTTPException(
@@ -121,7 +125,7 @@ async def login(
                 failure_reason=failure_reason,
             )
             db.add(login_log)
-            await db.flush()
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"비밀번호를 {MAX_FAILED_LOGIN_ATTEMPTS}회 이상 틀려 계정이 잠겼습니다. 관리자에게 문의하세요.",
@@ -135,7 +139,7 @@ async def login(
             failure_reason=failure_reason,
         )
         db.add(login_log)
-        await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"비밀번호가 올바르지 않습니다. (남은 시도: {remaining}회)",
@@ -150,6 +154,7 @@ async def login(
         success=True,
     )
     db.add(login_log)
+    await db.commit()
 
     # 6. Fingerprint 생성 + JWT 토큰 생성
     fingerprint = generate_fingerprint()
@@ -197,4 +202,6 @@ async def get_me(
         "username": current_user.username,
         "role": current_user.role.value,
         "is_active": current_user.is_active,
+        "display_name": current_user.display_name,
+        "class_name": current_user.class_name,
     }

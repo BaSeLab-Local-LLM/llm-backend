@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -89,7 +90,7 @@ app.add_middleware(
 )
 
 # ─── 요청 크기 제한 미들웨어 ──────────────────────────────────────────────────
-MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_REQUEST_BODY_SIZE = int(os.environ.get("MAX_REQUEST_BODY_SIZE", "50")) * 1024 * 1024  # MB → bytes
 
 
 @app.middleware("http")

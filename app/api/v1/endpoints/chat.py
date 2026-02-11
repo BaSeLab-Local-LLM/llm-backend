@@ -59,7 +59,7 @@ async def proxy_chat_completions(
                         "Authorization": f"Bearer {current_user.api_key}",
                         "Content-Type": "application/json",
                     },
-                    timeout=120.0,
+                    timeout=180.0,
                 ) as response:
                     if response.status_code != 200:
                         error_body = await response.aread()
@@ -86,7 +86,7 @@ async def proxy_chat_completions(
                     "Authorization": f"Bearer {current_user.api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=120.0,
+                timeout=180.0,
             )
             return response.json()
 

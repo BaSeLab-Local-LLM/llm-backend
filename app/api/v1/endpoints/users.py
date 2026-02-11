@@ -3,19 +3,15 @@ from uuid import UUID
 from datetime import datetime
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.security import (
-    create_jwt_token,
-    generate_fingerprint,
     get_current_user,
-    hash_fingerprint,
     require_admin_user,
-    set_fingerprint_cookie,
 )
 from app.models.user import User
 
@@ -63,6 +59,7 @@ class AdminUserListItem(BaseModel):
 
 class AdminUpdateUserRequest(BaseModel):
     """관리자: 사용자 프로필 수정 요청"""
+    username: Optional[str] = Field(default=None, min_length=1, max_length=32)
     display_name: Optional[str] = Field(default=None, max_length=64)
     class_name: Optional[str] = Field(default=None, max_length=64)
 
@@ -90,11 +87,10 @@ async def get_my_info(
 @router.post("/me/change-password", status_code=200)
 async def change_password(
     body: ChangePasswordRequest,
-    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """비밀번호 변경 → token_version 증가 → 새 JWT + 새 fingerprint 반환"""
+    """비밀번호 변경 → token_version 증가 → 모든 기기 강제 로그아웃"""
     # 현재 비밀번호 검증
     try:
         valid = bcrypt.checkpw(
@@ -117,21 +113,15 @@ async def change_password(
     ).decode("utf-8")
 
     current_user.password_hash = new_hash
-    # 비밀번호 변경 시 token_version 증가 → 다른 세션 강제 로그아웃
+    # 비밀번호 변경 시 token_version 증가 → 모든 기기(현재 포함) 강제 로그아웃
     current_user.token_version += 1
-    await db.flush()
-
-    # 새 fingerprint + JWT 토큰 발급 (현재 세션 유지)
-    fingerprint = generate_fingerprint()
-    fp_hash = hash_fingerprint(fingerprint)
-    new_token = create_jwt_token(current_user, fingerprint_hash=fp_hash)
-
-    # HttpOnly 쿠키에 새 fingerprint 설정
-    set_fingerprint_cookie(response, fingerprint)
+    # 응답 전 명시적 commit (get_db cleanup의 commit은 응답 전송 이후 실행되므로,
+    # 클라이언트가 즉시 재로그인 시 새 비밀번호가 반영되지 않을 수 있음)
+    await db.commit()
 
     return {
-        "message": "비밀번호가 변경되었습니다. 다른 기기의 세션은 로그아웃됩니다.",
-        "access_token": new_token,
+        "message": "비밀번호가 변경되었습니다. 모든 기기에서 로그아웃됩니다.",
+        "require_relogin": True,
     }
 
 
@@ -172,7 +162,7 @@ async def admin_update_user(
     admin_user: User = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """관리자: 사용자 프로필 수정 (이름, 수업)"""
+    """관리자: 사용자 프로필 수정 (username, 이름, 수업)"""
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalars().first()
 
@@ -182,10 +172,29 @@ async def admin_update_user(
             detail="사용자를 찾을 수 없습니다.",
         )
 
+    username_changed = False
+
+    if body.username is not None and body.username != target_user.username:
+        # username 중복 검사
+        existing = await db.execute(
+            select(User).where(User.username == body.username)
+        )
+        if existing.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"'{body.username}'은(는) 이미 사용 중인 아이디입니다.",
+            )
+        target_user.username = body.username
+        username_changed = True
+
     if body.display_name is not None:
         target_user.display_name = body.display_name or None  # 빈 문자열 → None
     if body.class_name is not None:
         target_user.class_name = body.class_name or None
+
+    # username 변경 시 해당 사용자 강제 로그아웃
+    if username_changed:
+        target_user.token_version += 1
 
     await db.flush()
     await db.refresh(target_user)
