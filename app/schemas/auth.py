@@ -9,8 +9,8 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """로그인 응답 - API Key 반환"""
-    api_key: str
+    """로그인 응답 - JWT 토큰 반환"""
+    access_token: str
+    token_type: str = "bearer"
     role: str
-    token_limit: Optional[int] = None
-
+    username: str

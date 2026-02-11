@@ -1,9 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import get_current_user
 from app.models.user import User
@@ -17,6 +20,76 @@ from app.schemas.chat import (
 )
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+# ─── LLM Proxy ────────────────────────────────────────────────────────────────
+
+
+@router.post("/completions")
+async def proxy_chat_completions(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    LLM 채팅 프록시 엔드포인트
+
+    JWT 인증 → 사용자의 LiteLLM API Key로 LiteLLM에 프록시.
+    프론트엔드는 LiteLLM API Key를 알 필요 없이 JWT만으로 LLM 사용 가능.
+    강제 로그아웃(token_version 증가) 시 즉시 LLM 접근도 차단됨.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="잘못된 요청 형식입니다.",
+        )
+
+    litellm_url = f"{settings.LITELLM_URL}/v1/chat/completions"
+    is_stream = body.get("stream", False)
+
+    if is_stream:
+        # SSE 스트리밍 프록시
+        async def stream_generator():
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    litellm_url,
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {current_user.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=120.0,
+                ) as response:
+                    if response.status_code != 200:
+                        error_body = await response.aread()
+                        yield f"data: {error_body.decode()}\n\n"
+                        return
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    else:
+        # 일반 (non-stream) 프록시
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                litellm_url,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {current_user.api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=120.0,
+            )
+            return response.json()
 
 
 # ─── Conversations ────────────────────────────────────────────────────────────
@@ -96,7 +169,6 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ):
     """특정 대화방의 메시지 전체 조회 (시간순)"""
-    # 대화방 소유권 확인
     conv_result = await db.execute(
         select(Conversation).where(
             Conversation.id == conversation_id,
@@ -110,7 +182,6 @@ async def list_messages(
             detail="대화방을 찾을 수 없습니다.",
         )
 
-    # 메시지 조회 (시간순 정렬)
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -126,12 +197,7 @@ async def save_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    메시지 저장 (User/Assistant)
-
-    LiteLLM 호출 전(User 메시지)과 후(Assistant 메시지)에 각각 호출합니다.
-    """
-    # 대화방 소유권 확인
+    """메시지 저장 (User/Assistant)"""
     conv_result = await db.execute(
         select(Conversation).where(
             Conversation.id == body.conv_id,
@@ -145,7 +211,6 @@ async def save_message(
             detail="대화방을 찾을 수 없습니다.",
         )
 
-    # role 유효성 검증
     try:
         message_role = MessageRole(body.role)
     except ValueError:
@@ -154,7 +219,6 @@ async def save_message(
             detail=f"유효하지 않은 role입니다. 허용값: {[r.value for r in MessageRole]}",
         )
 
-    # 메시지 저장
     message = Message(
         conversation_id=body.conv_id,
         role=message_role,
@@ -165,4 +229,3 @@ async def save_message(
     await db.refresh(message)
 
     return MessageSaveResponse(id=message.id)
-

@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.security import create_jwt_token, get_current_user
 from app.models.user import User
 from app.models.audit import LoginHistory
 from app.schemas.auth import LoginRequest, LoginResponse
@@ -29,11 +30,11 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    ID/PW 검증 후 API Key 반환
+    ID/PW 검증 후 JWT 토큰 반환
 
     1. users 테이블에서 username 조회
     2. bcrypt로 비밀번호 검증
-    3. 성공 시 api_key 반환
+    3. 성공 시 JWT access_token 반환
     """
     # 1. 사용자 조회
     result = await db.execute(
@@ -47,7 +48,6 @@ async def login(
 
     # 2. 사용자 존재 확인
     if not user:
-        # 로그인 실패 기록
         login_log = LoginHistory(
             user_id=None,
             ip_address=client_ip,
@@ -91,25 +91,7 @@ async def login(
             detail="비밀번호가 올바르지 않습니다.",
         )
 
-    # 5. API Key 만료 확인
-    if user.api_key_expires_at is not None:
-        from datetime import datetime, timezone
-
-        if user.api_key_expires_at < datetime.now(timezone.utc):
-            login_log = LoginHistory(
-                user_id=user.id,
-                ip_address=client_ip,
-                user_agent=user_agent,
-                success=False,
-                failure_reason="key_expired",
-            )
-            db.add(login_log)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="API Key가 만료되었습니다. 관리자에게 문의하세요.",
-            )
-
-    # 6. 로그인 성공 기록
+    # 5. 로그인 성공 기록
     login_log = LoginHistory(
         user_id=user.id,
         ip_address=client_ip,
@@ -118,9 +100,45 @@ async def login(
     )
     db.add(login_log)
 
+    # 6. JWT 토큰 생성
+    access_token = create_jwt_token(user)
+
     return LoginResponse(
-        api_key=user.api_key,
+        access_token=access_token,
         role=user.role.value,
-        token_limit=user.daily_token_limit,
+        username=user.username,
     )
 
+
+@router.get("/verify")
+async def verify_token(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    JWT 토큰 사전 검증 엔드포인트 (Pre-flight check)
+
+    LLM 프롬프트 전송 전에 호출하여 토큰의 유효성을 확인합니다.
+    - JWT 서명 검증
+    - token_version 일치 여부 (강제 로그아웃 감지)
+    - 계정 활성 상태 확인
+
+    토큰이 유효하면 {"valid": true}를 반환하고,
+    유효하지 않으면 get_current_user에서 401을 반환합니다.
+    """
+    return {
+        "valid": True,
+        "username": current_user.username,
+        "role": current_user.role.value,
+    }
+
+
+@router.get("/me")
+async def get_me(
+    current_user: User = Depends(get_current_user),
+):
+    """현재 로그인된 사용자 정보를 서버에서 검증 후 반환"""
+    return {
+        "username": current_user.username,
+        "role": current_user.role.value,
+        "is_active": current_user.is_active,
+    }

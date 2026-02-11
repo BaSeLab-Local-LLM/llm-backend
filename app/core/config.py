@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     LITELLM_URL: str = "http://litellm:4000"
     LITELLM_MASTER_KEY: str = ""
 
+    # JWT
+    JWT_SECRET_KEY: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -30,4 +34,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

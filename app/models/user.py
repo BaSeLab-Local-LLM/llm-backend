@@ -32,6 +32,7 @@ class User(SQLModel, table=True):
     api_key_expires_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+    token_version: int = Field(default=1)
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
@@ -40,4 +41,3 @@ class User(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
-
