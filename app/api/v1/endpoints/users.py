@@ -3,13 +3,20 @@ from uuid import UUID
 from datetime import datetime
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import get_current_user, require_admin_user, create_jwt_token
+from app.core.security import (
+    create_jwt_token,
+    generate_fingerprint,
+    get_current_user,
+    hash_fingerprint,
+    require_admin_user,
+    set_fingerprint_cookie,
+)
 from app.models.user import User
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -32,8 +39,8 @@ class UserInfoResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """비밀번호 변경 요청"""
-    current_password: str
-    new_password: str = Field(min_length=1, max_length=10)
+    current_password: str = Field(min_length=1, max_length=12)
+    new_password: str = Field(min_length=1, max_length=12)
 
 
 class AdminUserListItem(BaseModel):
@@ -70,10 +77,11 @@ async def get_my_info(
 @router.post("/me/change-password", status_code=200)
 async def change_password(
     body: ChangePasswordRequest,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """비밀번호 변경 → token_version 증가 → 새 JWT 반환"""
+    """비밀번호 변경 → token_version 증가 → 새 JWT + 새 fingerprint 반환"""
     # 현재 비밀번호 검증
     try:
         valid = bcrypt.checkpw(
@@ -100,8 +108,13 @@ async def change_password(
     current_user.token_version += 1
     await db.flush()
 
-    # 새 JWT 토큰 발급 (현재 세션 유지)
-    new_token = create_jwt_token(current_user)
+    # 새 fingerprint + JWT 토큰 발급 (현재 세션 유지)
+    fingerprint = generate_fingerprint()
+    fp_hash = hash_fingerprint(fingerprint)
+    new_token = create_jwt_token(current_user, fingerprint_hash=fp_hash)
+
+    # HttpOnly 쿠키에 새 fingerprint 설정
+    set_fingerprint_cookie(response, fingerprint)
 
     return {
         "message": "비밀번호가 변경되었습니다. 다른 기기의 세션은 로그아웃됩니다.",

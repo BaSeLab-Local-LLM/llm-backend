@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.chat import Conversation, Message, MessageRole
 from app.schemas.chat import (
     ConversationCreate,
+    ConversationRename,
     ConversationOut,
     MessageCreate,
     MessageOut,
@@ -126,6 +127,32 @@ async def create_conversation(
         model_name=body.model,
     )
     db.add(conversation)
+    await db.flush()
+    await db.refresh(conversation)
+    return conversation
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
+async def rename_conversation(
+    conversation_id: UUID,
+    body: ConversationRename,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """대화방 이름 변경"""
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+    )
+    conversation = result.scalars().first()
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="대화방을 찾을 수 없습니다.",
+        )
+    conversation.title = body.title
     await db.flush()
     await db.refresh(conversation)
     return conversation

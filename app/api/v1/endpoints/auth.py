@@ -1,10 +1,16 @@
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import create_jwt_token, get_current_user
+from app.core.security import (
+    create_jwt_token,
+    generate_fingerprint,
+    get_current_user,
+    hash_fingerprint,
+    set_fingerprint_cookie,
+)
 from app.models.user import User
 from app.models.audit import LoginHistory
 from app.schemas.auth import LoginRequest, LoginResponse
@@ -27,6 +33,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -100,8 +107,13 @@ async def login(
     )
     db.add(login_log)
 
-    # 6. JWT 토큰 생성
-    access_token = create_jwt_token(user)
+    # 6. Fingerprint 생성 + JWT 토큰 생성
+    fingerprint = generate_fingerprint()
+    fp_hash = hash_fingerprint(fingerprint)
+    access_token = create_jwt_token(user, fingerprint_hash=fp_hash)
+
+    # 7. HttpOnly 쿠키에 fingerprint 원본 저장 (JS 접근 불가)
+    set_fingerprint_cookie(response, fingerprint)
 
     return LoginResponse(
         access_token=access_token,

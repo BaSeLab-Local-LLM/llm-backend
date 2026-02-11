@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ─── Conversation ─────────────────────────────────────────────────────────────
@@ -12,6 +12,11 @@ class ConversationCreate(BaseModel):
     """대화방 생성 요청"""
     title: Optional[str] = "새 대화"
     model: Optional[str] = None
+
+
+class ConversationRename(BaseModel):
+    """대화방 이름 변경 요청"""
+    title: str = Field(min_length=1, max_length=100)
 
 
 class ConversationOut(BaseModel):

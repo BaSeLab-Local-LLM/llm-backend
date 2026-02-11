@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
 class LoginRequest(BaseModel):
     """로그인 요청"""
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=12)
+    password: str = Field(min_length=1, max_length=12)
 
 
 class LoginResponse(BaseModel):
