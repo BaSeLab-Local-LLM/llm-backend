@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import jwt
@@ -34,12 +35,15 @@ def hash_fingerprint(fingerprint: str) -> str:
 
 
 def create_jwt_token(user: User, fingerprint_hash: str | None = None) -> str:
-    """사용자 정보로 JWT 토큰 생성 (만료 없음)"""
+    """사용자 정보로 JWT 토큰 생성 (만료 시간 포함)"""
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user.id),
         "username": user.username,
         "role": user.role.value,
         "tv": user.token_version,  # token_version: 강제 로그아웃용
+        "iat": now,                # 발급 시간
+        "exp": now + timedelta(hours=settings.JWT_EXPIRE_HOURS),  # 만료 시간
     }
     if fingerprint_hash:
         payload["fgp"] = fingerprint_hash  # fingerprint hash: 세션 바인딩용
@@ -53,7 +57,7 @@ def set_fingerprint_cookie(response, fingerprint: str) -> None:
         value=fingerprint,
         httponly=True,         # JavaScript 접근 차단
         samesite="strict",     # CSRF 방지
-        secure=False,          # HTTPS 환경에서는 True로 변경
+        secure=not settings.DEBUG,  # 프로덕션(HTTPS)에서는 True
         path="/api",           # API 요청에만 쿠키 전송
         max_age=FGP_COOKIE_MAX_AGE,
     )
@@ -81,10 +85,15 @@ async def get_current_user(
             payload = jwt.decode(
                 token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
             )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="JWT 토큰이 만료되었습니다. 다시 로그인해주세요.",
+            )
         except jwt.InvalidTokenError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="JWT 토큰이 유효하지 않습니다. 변조되었거나 형식이 올바르지 않습니다.",
+                detail="JWT 토큰이 유효하지 않습니다.",
             )
 
         user_id = payload.get("sub")

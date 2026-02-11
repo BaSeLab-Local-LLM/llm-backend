@@ -1,5 +1,7 @@
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,12 @@ from app.schemas.auth import LoginRequest, LoginResponse
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+# 로그인 전용 rate limiter (브루트포스 방지: IP당 분당 5회)
+limiter = Limiter(key_func=get_remote_address)
+
+# 계정 잠금 기준: 비밀번호 연속 실패 횟수
+MAX_FAILED_LOGIN_ATTEMPTS = 10
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """bcrypt 해시 비밀번호 검증 (pgcrypto crypt 호환)"""
@@ -30,6 +38,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 async def login(
     body: LoginRequest,
     request: Request,
@@ -41,7 +50,8 @@ async def login(
 
     1. users 테이블에서 username 조회
     2. bcrypt로 비밀번호 검증
-    3. 성공 시 JWT access_token 반환
+    3. 비밀번호 10회 연속 실패 시 계정 자동 비활성화
+    4. 성공 시 실패 횟수 초기화 + JWT access_token 반환
     """
     # 1. 사용자 조회
     result = await db.execute(
@@ -65,7 +75,7 @@ async def login(
         db.add(login_log)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="사용자를 찾을 수 없습니다.",
+            detail="아이디 또는 비밀번호가 올바르지 않습니다.",
         )
 
     # 3. 계정 활성 상태 확인
@@ -78,27 +88,61 @@ async def login(
             failure_reason="account_disabled",
         )
         db.add(login_log)
+        # 로그인 실패 횟수 초과로 비활성화된 경우 구분된 메시지
+        if user.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"비밀번호를 {MAX_FAILED_LOGIN_ATTEMPTS}회 이상 틀려 계정이 잠겼습니다. 관리자에게 문의하세요.",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="비활성화된 계정입니다.",
+            detail="비활성화된 계정입니다. 관리자에게 문의하세요.",
         )
 
     # 4. 비밀번호 검증
     if not verify_password(body.password, user.password_hash):
+        # 실패 횟수 증가
+        user.failed_login_attempts += 1
+        remaining = MAX_FAILED_LOGIN_ATTEMPTS - user.failed_login_attempts
+
+        failure_reason = "invalid_password"
+
+        # 10회 이상 실패 시 계정 자동 비활성화
+        if user.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
+            user.is_active = False
+            user.token_version += 1  # 기존 세션도 강제 로그아웃
+            failure_reason = "account_locked_max_attempts"
+
+            login_log = LoginHistory(
+                user_id=user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                failure_reason=failure_reason,
+            )
+            db.add(login_log)
+            await db.flush()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"비밀번호를 {MAX_FAILED_LOGIN_ATTEMPTS}회 이상 틀려 계정이 잠겼습니다. 관리자에게 문의하세요.",
+            )
+
         login_log = LoginHistory(
             user_id=user.id,
             ip_address=client_ip,
             user_agent=user_agent,
             success=False,
-            failure_reason="invalid_password",
+            failure_reason=failure_reason,
         )
         db.add(login_log)
+        await db.flush()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="비밀번호가 올바르지 않습니다.",
+            detail=f"비밀번호가 올바르지 않습니다. (남은 시도: {remaining}회)",
         )
 
-    # 5. 로그인 성공 기록
+    # 5. 로그인 성공 → 실패 횟수 초기화
+    user.failed_login_attempts = 0
     login_log = LoginHistory(
         user_id=user.id,
         ip_address=client_ip,

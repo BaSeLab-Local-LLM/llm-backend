@@ -31,6 +31,8 @@ class UserInfoResponse(BaseModel):
     username: str
     role: str
     is_active: bool
+    display_name: Optional[str] = None
+    class_name: Optional[str] = None
     daily_token_limit: Optional[int] = None
     created_at: datetime
 
@@ -49,11 +51,20 @@ class AdminUserListItem(BaseModel):
     username: str
     role: str
     is_active: bool
+    failed_login_attempts: int = 0
+    display_name: Optional[str] = None
+    class_name: Optional[str] = None
     daily_token_limit: Optional[int] = None
     token_version: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AdminUpdateUserRequest(BaseModel):
+    """관리자: 사용자 프로필 수정 요청"""
+    display_name: Optional[str] = Field(default=None, max_length=64)
+    class_name: Optional[str] = Field(default=None, max_length=64)
 
 
 # ─── 일반 사용자 엔드포인트 ──────────────────────────────────────────────────
@@ -69,6 +80,8 @@ async def get_my_info(
         username=current_user.username,
         role=current_user.role.value,
         is_active=current_user.is_active,
+        display_name=current_user.display_name,
+        class_name=current_user.class_name,
         daily_token_limit=current_user.daily_token_limit,
         created_at=current_user.created_at,
     )
@@ -97,10 +110,10 @@ async def change_password(
             detail="현재 비밀번호가 올바르지 않습니다.",
         )
 
-    # 새 비밀번호 해시 생성
+    # 새 비밀번호 해시 생성 (bcrypt cost=12, 보안 강화)
     new_hash = bcrypt.hashpw(
         body.new_password.encode("utf-8"),
-        bcrypt.gensalt(rounds=8),
+        bcrypt.gensalt(rounds=12),
     ).decode("utf-8")
 
     current_user.password_hash = new_hash
@@ -141,12 +154,54 @@ async def admin_list_users(
             username=u.username,
             role=u.role.value,
             is_active=u.is_active,
+            failed_login_attempts=u.failed_login_attempts,
+            display_name=u.display_name,
+            class_name=u.class_name,
             daily_token_limit=u.daily_token_limit,
             token_version=u.token_version,
             created_at=u.created_at,
         )
         for u in users
     ]
+
+
+@router.patch("/admin/{user_id}", response_model=AdminUserListItem)
+async def admin_update_user(
+    user_id: UUID,
+    body: AdminUpdateUserRequest,
+    admin_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자: 사용자 프로필 수정 (이름, 수업)"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    target_user = result.scalars().first()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="사용자를 찾을 수 없습니다.",
+        )
+
+    if body.display_name is not None:
+        target_user.display_name = body.display_name or None  # 빈 문자열 → None
+    if body.class_name is not None:
+        target_user.class_name = body.class_name or None
+
+    await db.flush()
+    await db.refresh(target_user)
+
+    return AdminUserListItem(
+        id=target_user.id,
+        username=target_user.username,
+        role=target_user.role.value,
+        is_active=target_user.is_active,
+        failed_login_attempts=target_user.failed_login_attempts,
+        display_name=target_user.display_name,
+        class_name=target_user.class_name,
+        daily_token_limit=target_user.daily_token_limit,
+        token_version=target_user.token_version,
+        created_at=target_user.created_at,
+    )
 
 
 @router.post("/admin/{user_id}/force-logout")
@@ -198,8 +253,11 @@ async def admin_toggle_active(
         )
 
     target_user.is_active = not target_user.is_active
-    # 비활성화 시 강제 로그아웃
-    if not target_user.is_active:
+    if target_user.is_active:
+        # 활성화 시 로그인 실패 횟수 초기화 (계정 잠금 해제)
+        target_user.failed_login_attempts = 0
+    else:
+        # 비활성화 시 강제 로그아웃
         target_user.token_version += 1
 
     await db.flush()

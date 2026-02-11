@@ -1,7 +1,7 @@
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.models.chat import Conversation, Message, MessageRole
 from app.schemas.chat import (
+    ChatCompletionRequest,
     ConversationCreate,
     ConversationRename,
     ConversationOut,
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 @router.post("/completions")
 async def proxy_chat_completions(
-    request: Request,
+    body: ChatCompletionRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -37,17 +38,14 @@ async def proxy_chat_completions(
     JWT 인증 → 사용자의 LiteLLM API Key로 LiteLLM에 프록시.
     프론트엔드는 LiteLLM API Key를 알 필요 없이 JWT만으로 LLM 사용 가능.
     강제 로그아웃(token_version 증가) 시 즉시 LLM 접근도 차단됨.
+
+    Pydantic으로 입력 검증: 메시지 수, 길이, 파라미터 범위를 제한합니다.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="잘못된 요청 형식입니다.",
-        )
+    # Pydantic 모델 → dict 변환 (None 값 제외)
+    request_body = body.model_dump(exclude_none=True)
 
     litellm_url = f"{settings.LITELLM_URL}/v1/chat/completions"
-    is_stream = body.get("stream", False)
+    is_stream = body.stream
 
     if is_stream:
         # SSE 스트리밍 프록시
@@ -56,7 +54,7 @@ async def proxy_chat_completions(
                 async with client.stream(
                     "POST",
                     litellm_url,
-                    json=body,
+                    json=request_body,
                     headers={
                         "Authorization": f"Bearer {current_user.api_key}",
                         "Content-Type": "application/json",
@@ -83,7 +81,7 @@ async def proxy_chat_completions(
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 litellm_url,
-                json=body,
+                json=request_body,
                 headers={
                     "Authorization": f"Bearer {current_user.api_key}",
                     "Content-Type": "application/json",
@@ -243,7 +241,7 @@ async def save_message(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 role입니다. 허용값: {[r.value for r in MessageRole]}",
+            detail="유효하지 않은 메시지 역할(role)입니다.",
         )
 
     message = Message(

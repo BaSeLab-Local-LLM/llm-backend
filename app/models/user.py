@@ -28,6 +28,9 @@ class User(SQLModel, table=True):
         )
     )
     is_active: bool = Field(default=True)
+    failed_login_attempts: int = Field(default=0)
+    display_name: Optional[str] = Field(default=None, max_length=64)
+    class_name: Optional[str] = Field(default=None, max_length=64)
     daily_token_limit: Optional[int] = Field(default=100000)
     api_key_expires_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True)
