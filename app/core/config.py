@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         description="LiteLLM 마스터 키 (환경변수 필수)",
     )
 
+    # Cookie 보안 — HTTPS 사용 시 True, HTTP만 사용 시 False
+    # "auto"이면 DEBUG 값에 따라 자동 결정 (DEBUG=True → False, DEBUG=False → True)
+    COOKIE_SECURE: str = "auto"
+
     # JWT — 기본값 없음: 환경변수 필수, 최소 32자
     JWT_SECRET_KEY: str = Field(
         ...,

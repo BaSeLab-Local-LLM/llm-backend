@@ -50,15 +50,24 @@ def create_jwt_token(user: User, fingerprint_hash: str | None = None) -> str:
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
+def _is_cookie_secure() -> bool:
+    """COOKIE_SECURE 설정값을 해석하여 bool로 반환합니다."""
+    val = settings.COOKIE_SECURE.strip().lower()
+    if val == "auto":
+        return not settings.DEBUG
+    return val in ("true", "1", "yes")
+
+
 def set_fingerprint_cookie(response, fingerprint: str) -> None:
     """Response에 HttpOnly 핑거프린트 쿠키를 설정합니다."""
+    is_secure = _is_cookie_secure()
     response.set_cookie(
         key=FGP_COOKIE_NAME,
         value=fingerprint,
-        httponly=True,         # JavaScript 접근 차단
-        samesite="strict",     # CSRF 방지
-        secure=not settings.DEBUG,  # 프로덕션(HTTPS)에서는 True
-        path="/api",           # API 요청에만 쿠키 전송
+        httponly=True,                          # JavaScript 접근 차단
+        samesite="strict" if is_secure else "lax",  # HTTPS: strict, HTTP: lax
+        secure=is_secure,                       # HTTPS에서만 쿠키 전송
+        path="/api",                            # API 요청에만 쿠키 전송
         max_age=FGP_COOKIE_MAX_AGE,
     )
 
